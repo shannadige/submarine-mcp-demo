@@ -31,6 +31,7 @@ interface Bill {
 let transactions: Transaction[] = [];
 let budgets: Budget[] = [];
 let bills: Bill[] = [];
+let isInitialized = false;
 
 // Poke API integration
 async function sendPokeNotification(message: string, apiKey?: string) {
@@ -61,8 +62,75 @@ async function sendPokeNotification(message: string, apiKey?: string) {
   }
 }
 
+// Auto-initialization function for default budgets
+async function initializeDefaultBudgets() {
+  if (isInitialized || !process.env.AUTO_SETUP_ENABLED) return;
+
+  const defaultBudgets = [
+    { category: 'food', limit: parseInt(process.env.DEFAULT_FOOD_BUDGET || '500') },
+    { category: 'groceries', limit: parseInt(process.env.DEFAULT_GROCERIES_BUDGET || '400') },
+    { category: 'transportation', limit: parseInt(process.env.DEFAULT_TRANSPORTATION_BUDGET || '200') },
+    { category: 'entertainment', limit: parseInt(process.env.DEFAULT_ENTERTAINMENT_BUDGET || '150') },
+    { category: 'shopping', limit: parseInt(process.env.DEFAULT_SHOPPING_BUDGET || '300') },
+    { category: 'healthcare', limit: parseInt(process.env.DEFAULT_HEALTHCARE_BUDGET || '100') },
+    { category: 'utilities', limit: parseInt(process.env.DEFAULT_UTILITIES_BUDGET || '200') },
+    { category: 'miscellaneous', limit: parseInt(process.env.DEFAULT_MISCELLANEOUS_BUDGET || '250') }
+  ];
+
+  // Initialize budgets
+  for (const budget of defaultBudgets) {
+    if (budget.limit > 0 && !budgets.find(b => b.category === budget.category)) {
+      budgets.push({
+        category: budget.category,
+        limit: budget.limit,
+        spent: 0,
+        period: 'monthly'
+      });
+    }
+  }
+
+  isInitialized = true;
+
+  // Send welcome message to Poke
+  if (process.env.POKE_API_KEY && budgets.length > 0) {
+    const totalBudget = budgets.reduce((sum, b) => sum + b.limit, 0);
+    const welcomeMessage = `🎉 Finance Tracker Setup Complete!\n\n` +
+      `📊 ${budgets.length} budget categories configured\n` +
+      `💰 Total monthly budget: $${totalBudget}\n` +
+      `⚠️ Alert threshold: ${process.env.BUDGET_WARNING_THRESHOLD || 80}%\n` +
+      `📅 Bill reminders: ${process.env.BILL_REMINDER_DAYS || 7} days ahead\n\n` +
+      `🔔 Ready to track expenses and send smart alerts!`;
+
+    await sendPokeNotification(welcomeMessage);
+  }
+}
+
 const handler = createMcpHandler(
   async (server) => {
+    // Initialize default budgets on first use
+    await initializeDefaultBudgets();
+
+    // Manual Setup Tool
+    server.tool(
+      "setup_finance_tracker",
+      "Initialize finance tracker with default budgets and send welcome message",
+      {},
+      async () => {
+        await initializeDefaultBudgets();
+
+        const budgetList = budgets.map(b =>
+          `• ${b.category}: $${b.limit} ${b.period}`
+        ).join('\n');
+
+        return {
+          content: [{
+            type: "text",
+            text: `🎉 Finance Tracker Initialized!\n\n📊 Budgets Set:\n${budgetList}\n\n✅ Ready for expense tracking and Poke alerts!`
+          }]
+        };
+      }
+    );
+
     // Add Transaction Tool
     server.tool(
       "add_transaction",
@@ -373,6 +441,9 @@ const handler = createMcpHandler(
   {
     capabilities: {
       tools: {
+        setup_finance_tracker: {
+          description: "Initialize finance tracker with default budgets and welcome message"
+        },
         add_transaction: {
           description: "Add a new income or expense transaction with optional Poke notifications"
         },

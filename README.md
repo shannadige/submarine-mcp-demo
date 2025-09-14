@@ -49,24 +49,55 @@ Visit [poke.com/settings/advanced](https://poke.com/settings/advanced) to get yo
 **For Vercel Deployment:**
 1. Go to your Vercel project settings
 2. Navigate to "Environment Variables"
-3. Add: `POKE_API_KEY` = `your-api-key-here`
+3. Add these variables:
+
+```bash
+# Required
+POKE_API_KEY=your-api-key-here
+
+# Auto-Configuration (Optional - Customize Your Budgets!)
+DEFAULT_FOOD_BUDGET=500
+DEFAULT_GROCERIES_BUDGET=400
+DEFAULT_TRANSPORTATION_BUDGET=200
+DEFAULT_ENTERTAINMENT_BUDGET=150
+DEFAULT_SHOPPING_BUDGET=300
+DEFAULT_HEALTHCARE_BUDGET=100
+DEFAULT_UTILITIES_BUDGET=200
+DEFAULT_MISCELLANEOUS_BUDGET=250
+
+# Alert Settings
+BUDGET_WARNING_THRESHOLD=80
+BILL_REMINDER_DAYS=7
+AUTO_SETUP_ENABLED=true
+```
 
 **For Local Development:**
 ```bash
 # Copy example file
 cp .env.local.example .env.local
 
-# Edit with your API key
+# Edit with your API key and budget preferences
 POKE_API_KEY=your-poke-api-key-here
+DEFAULT_FOOD_BUDGET=500  # Customize these amounts!
+# ... etc
 ```
 
 ### **Step 3: Connect MCP Integration**
 1. **Add MCP Integration**: Go to [poke.com/settings/connections/integrations/new](https://poke.com/settings/connections/integrations/new)
 2. **Use Your Server URL**: `https://your-app.vercel.app/mcp`
 
-✅ **Now all tools automatically send notifications without needing API key parameters!**
+✅ **Automatic Setup Complete!** Your budgets are configured and Poke will receive a welcome message on first deployment.
 
 ## 🔧 Available Tools
+
+### 🚀 **Auto-Setup Tool**
+
+#### `setup_finance_tracker`
+**Initialize finance tracker with your configured budgets**
+```json
+{}
+```
+*🎉 Automatically sets up all your default budgets and sends welcome message to Poke*
 
 ### `add_transaction`
 Add income or expense with automatic budget tracking and Poke notifications.
