@@ -34,13 +34,18 @@ let bills: Bill[] = [];
 
 // Poke API integration
 async function sendPokeNotification(message: string, apiKey?: string) {
-  if (!apiKey) return { success: false, error: "No API key provided" };
+  // Use provided API key or fallback to environment variable
+  const effectiveApiKey = apiKey || process.env.POKE_API_KEY;
+
+  if (!effectiveApiKey) {
+    return { success: false, error: "No API key provided (set POKE_API_KEY env var or pass as parameter)" };
+  }
 
   try {
     const response = await fetch('https://poke.com/api/v1/inbound-sms/webhook', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        'Authorization': `Bearer ${effectiveApiKey}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({ message })

@@ -41,23 +41,44 @@ Visit `http://localhost:3000/mcp` to test the MCP server.
 
 ## 📱 Poke Setup
 
-1. **Get API Key**: Visit [poke.com/settings/advanced](https://poke.com/settings/advanced)
-2. **Add MCP Integration**: Go to [poke.com/settings/connections/integrations/new](https://poke.com/settings/connections/integrations/new)
-3. **Use Your Server URL**: `https://your-app.vercel.app/mcp`
+### **Step 1: Get API Key**
+Visit [poke.com/settings/advanced](https://poke.com/settings/advanced) to get your API key.
+
+### **Step 2: Configure Environment Variables**
+
+**For Vercel Deployment:**
+1. Go to your Vercel project settings
+2. Navigate to "Environment Variables"
+3. Add: `POKE_API_KEY` = `your-api-key-here`
+
+**For Local Development:**
+```bash
+# Copy example file
+cp .env.local.example .env.local
+
+# Edit with your API key
+POKE_API_KEY=your-poke-api-key-here
+```
+
+### **Step 3: Connect MCP Integration**
+1. **Add MCP Integration**: Go to [poke.com/settings/connections/integrations/new](https://poke.com/settings/connections/integrations/new)
+2. **Use Your Server URL**: `https://your-app.vercel.app/mcp`
+
+✅ **Now all tools automatically send notifications without needing API key parameters!**
 
 ## 🔧 Available Tools
 
 ### `add_transaction`
-Add income or expense with automatic budget tracking.
+Add income or expense with automatic budget tracking and Poke notifications.
 ```json
 {
   "type": "expense",
   "amount": 50.00,
   "category": "food",
-  "description": "Lunch at café",
-  "pokeApiKey": "your-poke-api-key"
+  "description": "Lunch at café"
 }
 ```
+*🔔 Automatically sends Poke alerts if budget exceeded*
 
 ### `set_budget`
 Create spending limits for categories.
@@ -70,20 +91,18 @@ Create spending limits for categories.
 ```
 
 ### `get_financial_summary`
-Generate comprehensive financial reports.
+Generate comprehensive financial reports with automatic Poke delivery.
 ```json
 {
-  "period": "month",
-  "pokeApiKey": "your-poke-api-key"
+  "period": "month"
 }
 ```
 
 ### `check_due_bills`
-Check upcoming bills and send Poke alerts.
+Check upcoming bills and send automatic Poke alerts.
 ```json
 {
-  "daysAhead": 7,
-  "pokeApiKey": "your-poke-api-key"
+  "daysAhead": 7
 }
 ```
 
@@ -91,13 +110,12 @@ Check upcoming bills and send Poke alerts.
 Check all budget statuses with visual indicators.
 
 ### `track_investment`
-Monitor investment performance (simulated pricing).
+Monitor investment performance with automatic Poke updates.
 ```json
 {
   "symbol": "AAPL",
   "shares": 10,
-  "purchasePrice": 150.00,
-  "pokeApiKey": "your-poke-api-key"
+  "purchasePrice": 150.00
 }
 ```
 
@@ -105,8 +123,7 @@ Monitor investment performance (simulated pricing).
 Send custom financial alerts via Poke.
 ```json
 {
-  "message": "💰 Monthly financial review completed!",
-  "pokeApiKey": "your-poke-api-key"
+  "message": "💰 Monthly financial review completed!"
 }
 ```
 
