@@ -1,5 +1,17 @@
 import { createMcpHandler } from "mcp-handler";
 import { z } from "zod";
+import {
+  createTransaction,
+  getTransactions,
+  createOrUpdateBudget,
+  getBudgets,
+  getBudgetByCategory,
+  updateBudgetSpent,
+  createBill,
+  getBills,
+  getDueBills,
+  getFinancialSummary
+} from "../../lib/database";
 
 // Finance data store (in production, this would be a database)
 interface Transaction {
@@ -27,11 +39,7 @@ interface Bill {
   paid: boolean;
 }
 
-// In-memory storage (use database in production)
-let transactions: Transaction[] = [];
-let budgets: Budget[] = [];
-let bills: Bill[] = [];
-let isInitialized = false;
+// Database storage - no more in-memory arrays needed!
 
 // Poke API integration
 async function sendPokeNotification(message: string, apiKey?: string) {
@@ -64,36 +72,34 @@ async function sendPokeNotification(message: string, apiKey?: string) {
 
 // Auto-initialization function for default budgets
 async function initializeDefaultBudgets() {
-  if (isInitialized || !process.env.AUTO_SETUP_ENABLED) return;
+  if (!process.env.AUTO_SETUP_ENABLED) return;
+
+  // Check if budgets already exist in database
+  const existingBudgets = await getBudgets();
+  if (existingBudgets.length > 0) return; // Already initialized
 
   const defaultBudgets = [
-    { category: 'food', limit: parseInt(process.env.DEFAULT_FOOD_BUDGET || '500') },
-    { category: 'groceries', limit: parseInt(process.env.DEFAULT_GROCERIES_BUDGET || '400') },
-    { category: 'transportation', limit: parseInt(process.env.DEFAULT_TRANSPORTATION_BUDGET || '200') },
-    { category: 'entertainment', limit: parseInt(process.env.DEFAULT_ENTERTAINMENT_BUDGET || '150') },
-    { category: 'shopping', limit: parseInt(process.env.DEFAULT_SHOPPING_BUDGET || '300') },
-    { category: 'healthcare', limit: parseInt(process.env.DEFAULT_HEALTHCARE_BUDGET || '100') },
-    { category: 'utilities', limit: parseInt(process.env.DEFAULT_UTILITIES_BUDGET || '200') },
-    { category: 'miscellaneous', limit: parseInt(process.env.DEFAULT_MISCELLANEOUS_BUDGET || '250') }
+    { category: 'food', budget_limit: parseInt(process.env.DEFAULT_FOOD_BUDGET || '500'), spent: 0, period: 'monthly' as const },
+    { category: 'groceries', budget_limit: parseInt(process.env.DEFAULT_GROCERIES_BUDGET || '400'), spent: 0, period: 'monthly' as const },
+    { category: 'transportation', budget_limit: parseInt(process.env.DEFAULT_TRANSPORTATION_BUDGET || '200'), spent: 0, period: 'monthly' as const },
+    { category: 'entertainment', budget_limit: parseInt(process.env.DEFAULT_ENTERTAINMENT_BUDGET || '150'), spent: 0, period: 'monthly' as const },
+    { category: 'shopping', budget_limit: parseInt(process.env.DEFAULT_SHOPPING_BUDGET || '300'), spent: 0, period: 'monthly' as const },
+    { category: 'healthcare', budget_limit: parseInt(process.env.DEFAULT_HEALTHCARE_BUDGET || '100'), spent: 0, period: 'monthly' as const },
+    { category: 'utilities', budget_limit: parseInt(process.env.DEFAULT_UTILITIES_BUDGET || '200'), spent: 0, period: 'monthly' as const },
+    { category: 'miscellaneous', budget_limit: parseInt(process.env.DEFAULT_MISCELLANEOUS_BUDGET || '250'), spent: 0, period: 'monthly' as const }
   ];
 
-  // Initialize budgets
+  // Initialize budgets in database
   for (const budget of defaultBudgets) {
-    if (budget.limit > 0 && !budgets.find(b => b.category === budget.category)) {
-      budgets.push({
-        category: budget.category,
-        limit: budget.limit,
-        spent: 0,
-        period: 'monthly'
-      });
+    if (budget.budget_limit > 0) {
+      await createOrUpdateBudget(budget);
     }
   }
 
-  isInitialized = true;
-
   // Send welcome message to Poke
-  if (process.env.POKE_API_KEY && budgets.length > 0) {
-    const totalBudget = budgets.reduce((sum, b) => sum + b.limit, 0);
+  if (process.env.POKE_API_KEY) {
+    const budgets = await getBudgets();
+    const totalBudget = budgets.reduce((sum, b) => sum + b.budget_limit, 0);
     const welcomeMessage = `🎉 Finance Tracker Setup Complete!\n\n` +
       `📊 ${budgets.length} budget categories configured\n` +
       `💰 Total monthly budget: $${totalBudget}\n` +

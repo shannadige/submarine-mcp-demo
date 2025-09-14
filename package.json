@@ -8,6 +8,7 @@
     "start": "next start"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.57.4",
     "mcp-handler": "^1.0.1",
     "next": "15.2.4",
     "react": "^19.1.0",
