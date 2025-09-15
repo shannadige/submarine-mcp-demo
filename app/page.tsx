@@ -32,10 +32,21 @@ export default function SimpleBillsTracker() {
   const [alerts, setAlerts] = useState<BillAlert[]>([])
   const [loading, setLoading] = useState(true)
   const [showAddForm, setShowAddForm] = useState(false)
+  const [showEditForm, setShowEditForm] = useState(false)
+  const [editingBill, setEditingBill] = useState<SimpleBill | null>(null)
   const [newBill, setNewBill] = useState({
     name: '',
     amount: '',
     frequency: 'monthly' as const,
+    next_due_date: '',
+    autopay: false,
+    category: 'subscription',
+    notes: ''
+  })
+  const [editBill, setEditBill] = useState({
+    name: '',
+    amount: '',
+    frequency: 'monthly' as 'weekly' | 'monthly' | 'quarterly' | 'yearly',
     next_due_date: '',
     autopay: false,
     category: 'subscription',
@@ -132,6 +143,66 @@ export default function SimpleBillsTracker() {
       }
     } catch (error) {
       console.error('Failed to mark as paid:', error)
+    }
+  }
+
+  function startEditBill(bill: SimpleBill) {
+    setEditingBill(bill)
+    setEditBill({
+      name: bill.name,
+      amount: bill.amount.toString(),
+      frequency: bill.frequency,
+      next_due_date: bill.next_due_date,
+      autopay: bill.autopay,
+      category: bill.category,
+      notes: bill.notes || ''
+    })
+    setShowEditForm(true)
+  }
+
+  async function updateBill() {
+    if (!editingBill) return
+
+    try {
+      const response = await fetch(`/api/simple-bills/${editingBill.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: editBill.name,
+          amount: parseFloat(editBill.amount),
+          frequency: editBill.frequency,
+          next_due_date: editBill.next_due_date,
+          autopay: editBill.autopay,
+          category: editBill.category,
+          notes: editBill.notes
+        })
+      })
+
+      if (response.ok) {
+        setShowEditForm(false)
+        setEditingBill(null)
+        loadBills()
+      }
+    } catch (error) {
+      console.error('Failed to update bill:', error)
+    }
+  }
+
+  async function deleteBill(billId: string) {
+    if (!confirm('Are you sure you want to delete this bill?')) {
+      return
+    }
+
+    try {
+      const response = await fetch(`/api/simple-bills/${billId}/delete`, {
+        method: 'DELETE'
+      })
+
+      if (response.ok) {
+        loadBills()
+      }
+    } catch (error) {
+      console.error('Failed to delete bill:', error)
     }
   }
 
@@ -300,21 +371,39 @@ export default function SimpleBillsTracker() {
                           {bill.autopay ? '🤖 Autopay' : '💳 Manual'}
                         </span>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                        <button
-                          onClick={() => toggleAutopay(bill.id, bill.autopay)}
-                          className="text-blue-600 hover:text-blue-900"
-                        >
-                          {bill.autopay ? 'Disable Autopay' : 'Enable Autopay'}
-                        </button>
-                        {!bill.autopay && (
-                          <button
-                            onClick={() => markAsPaid(bill.id)}
-                            className="text-green-600 hover:text-green-900"
-                          >
-                            Mark Paid
-                          </button>
-                        )}
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                        <div className="flex flex-col space-y-1">
+                          <div className="space-x-2">
+                            <button
+                              onClick={() => startEditBill(bill)}
+                              className="text-blue-600 hover:text-blue-900"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => deleteBill(bill.id)}
+                              className="text-red-600 hover:text-red-900"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                          <div className="space-x-2">
+                            <button
+                              onClick={() => toggleAutopay(bill.id, bill.autopay)}
+                              className="text-purple-600 hover:text-purple-900 text-xs"
+                            >
+                              {bill.autopay ? 'Disable Autopay' : 'Enable Autopay'}
+                            </button>
+                            {!bill.autopay && (
+                              <button
+                                onClick={() => markAsPaid(bill.id)}
+                                className="text-green-600 hover:text-green-900 text-xs"
+                              >
+                                Mark Paid
+                              </button>
+                            )}
+                          </div>
+                        </div>
                       </td>
                     </tr>
                   )
@@ -427,6 +516,111 @@ export default function SimpleBillsTracker() {
                 className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
               >
                 Add Bill
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Bill Modal */}
+      {showEditForm && editingBill && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+          <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <h3 className="text-lg font-medium text-gray-900 mb-4">Edit Bill: {editingBill.name}</h3>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Name</label>
+                <input
+                  type="text"
+                  value={editBill.name}
+                  onChange={(e) => setEditBill({...editBill, name: e.target.value})}
+                  className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"
+                  placeholder="e.g., Netflix, Rent, Electric Bill"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Amount</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={editBill.amount}
+                  onChange={(e) => setEditBill({...editBill, amount: e.target.value})}
+                  className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"
+                  placeholder="0.00"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Frequency</label>
+                <select
+                  value={editBill.frequency}
+                  onChange={(e) => setEditBill({...editBill, frequency: e.target.value as any})}
+                  className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"
+                >
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                  <option value="quarterly">Quarterly</option>
+                  <option value="yearly">Yearly</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Next Due Date</label>
+                <input
+                  type="date"
+                  value={editBill.next_due_date}
+                  onChange={(e) => setEditBill({...editBill, next_due_date: e.target.value})}
+                  className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Category</label>
+                <select
+                  value={editBill.category}
+                  onChange={(e) => setEditBill({...editBill, category: e.target.value})}
+                  className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"
+                >
+                  <option value="subscription">Subscription</option>
+                  <option value="streaming">Streaming</option>
+                  <option value="utilities">Utilities</option>
+                  <option value="housing">Housing</option>
+                  <option value="insurance">Insurance</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="editAutopay"
+                  checked={editBill.autopay}
+                  onChange={(e) => setEditBill({...editBill, autopay: e.target.checked})}
+                  className="h-4 w-4 text-blue-600 rounded"
+                />
+                <label htmlFor="editAutopay" className="ml-2 text-sm text-gray-900">
+                  🤖 This bill is on autopay
+                </label>
+              </div>
+            </div>
+
+            <div className="flex justify-end space-x-3 mt-6">
+              <button
+                onClick={() => {
+                  setShowEditForm(false)
+                  setEditingBill(null)
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={updateBill}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
+              >
+                Update Bill
               </button>
             </div>
           </div>
