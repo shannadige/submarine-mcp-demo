@@ -33,6 +33,7 @@ export interface MonthlyBillStatus {
   amount: number
   due_day: number
   autopay: boolean
+  reminder_enabled: boolean
   category: string
   frequency: string
   is_paid: boolean
