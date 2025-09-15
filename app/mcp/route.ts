@@ -1,17 +1,19 @@
 import { createMcpHandler } from "mcp-handler";
 import { z } from "zod";
 import {
+  getCurrentMonthBills,
+  getNextMonthBills,
   getAllBills,
-  getBillsDueSoon,
-  getManualPaymentBills,
   createBill,
   updateBill,
   deleteBill,
-  markBillAsPaid,
-  toggleAutopay,
-  getBillsSummary,
+  markCurrentMonthBillPaid,
+  getMonthlyBillsSummary,
+  getBillsDueSoon,
+  getOverdueBills,
   logBillAlert
-} from "../../lib/simple-database";
+} from "../../lib/monthly-database";
+import { checkAndSendBillAlerts, formatAlertSummary } from "../../lib/alert-system";
 
 // Poke API integration for notifications
 async function sendPokeNotification(message: string) {
@@ -29,7 +31,7 @@ async function sendPokeNotification(message: string) {
       },
       body: JSON.stringify({
         message,
-        from: 'Bills Tracker'
+        from: 'Monthly Bills Tracker'
       })
     });
 
@@ -45,39 +47,37 @@ async function sendPokeNotification(message: string) {
 }
 
 const mcpHandler = createMcpHandler((server) => {
-  // Add Bill/Subscription Tool
+  // Add Bill Tool
   server.tool(
     "add_bill",
-    "Add a new recurring bill or subscription",
+    "Add a new recurring bill or subscription with a specific due day of month",
     {
-      name: z.string().describe("Name of the bill/subscription (e.g., Netflix, Rent, Electric Bill)"),
-      amount: z.number().positive().describe("Amount of the bill"),
-      frequency: z.enum(['weekly', 'monthly', 'quarterly', 'yearly']).describe("How often the bill recurs"),
-      nextDueDate: z.string().describe("Next due date (YYYY-MM-DD format)"),
-      autopay: z.boolean().default(false).describe("Is this bill on autopay?"),
-      category: z.string().default('subscription').describe("Category (e.g., streaming, utilities, housing)"),
-      notes: z.string().optional().describe("Optional notes about the bill")
+      name: z.string().describe("Name of the bill (e.g., Netflix, Rent, Electric Bill)"),
+      amount: z.number().positive().describe("Monthly amount in dollars"),
+      dueDay: z.number().min(1).max(31).describe("Day of month when bill is due (1-31)"),
+      frequency: z.enum(['monthly', 'quarterly', 'yearly']).default('monthly'),
+      autopay: z.boolean().default(false).describe("True if bill is automatically paid"),
+      category: z.string().default('subscription').describe("Category like streaming, utilities, housing")
     },
-    async ({ name, amount, frequency, nextDueDate, autopay, category, notes }) => {
+    async ({ name, amount, dueDay, frequency, autopay, category }) => {
       try {
         const bill = await createBill({
           name,
           amount,
+          due_day: dueDay,
           frequency,
-          next_due_date: nextDueDate,
           autopay,
+          category,
           reminder_enabled: true,
           reminder_days_before: 3,
-          category,
-          notes,
           active: true
         });
 
-        const autopayText = autopay ? "🤖 Autopay enabled" : "💳 Manual payment";
-        const message = `✅ Bill added: ${name} - $${amount} ${frequency} (${autopayText})`;
+        const autopayText = autopay ? ' 🤖 (autopay enabled)' : ' 💳 (manual payment)';
+        const message = `✅ Added bill: ${name} - $${amount} due on ${dueDay}${autopayText}`;
 
-        // Log the addition as an alert
-        await logBillAlert(bill.id, 'bill_added', message);
+        await logBillAlert(bill.id, 'bill_created', message);
+        await sendPokeNotification(message);
 
         return {
           content: [{
@@ -96,103 +96,96 @@ const mcpHandler = createMcpHandler((server) => {
     }
   );
 
-  // List Bills Tool
+  // List Current Month Bills
   server.tool(
-    "list_bills",
-    "Get all active bills and subscriptions",
-    {
-      filter: z.enum(['all', 'due_soon', 'manual_only']).default('all').describe("Filter bills to show")
-    },
-    async ({ filter }) => {
+    "current_month_bills",
+    "Show all bills for the current month with payment status",
+    {},
+    async () => {
       try {
-        let bills;
-        switch (filter) {
-          case 'due_soon':
-            bills = await getBillsDueSoon(7);
-            break;
-          case 'manual_only':
-            bills = await getManualPaymentBills();
-            break;
-          default:
-            bills = await getAllBills();
-        }
+        const bills = await getCurrentMonthBills();
+        const currentMonth = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
         if (bills.length === 0) {
           return {
             content: [{
               type: "text",
-              text: "📋 No bills found. Use add_bill to start tracking your subscriptions and bills."
+              text: `📋 No bills for ${currentMonth}`
             }]
           };
         }
 
-        const billsList = bills.map(bill => {
-          const autopayIcon = bill.autopay ? "🤖" : "💳";
-          const daysUntilDue = Math.ceil((new Date(bill.next_due_date).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
-          const urgency = daysUntilDue <= 0 ? "⚠️ OVERDUE" :
-                         daysUntilDue <= 3 ? "🔔 DUE SOON" :
-                         `📅 ${daysUntilDue} days`;
+        let message = `📅 ${currentMonth} Bills:\n\n`;
 
-          return `${autopayIcon} ${bill.name}: $${bill.amount} ${bill.frequency} - ${urgency} (${new Date(bill.next_due_date).toLocaleDateString()})`;
-        }).join('\n');
+        bills.forEach(bill => {
+          const statusIcon = bill.is_paid ? '✅' : bill.is_overdue ? '⚠️' : '⏳';
+          const paymentType = bill.autopay ? '🤖' : '💳';
+          const daysText = bill.days_until_due >= 0
+            ? (bill.days_until_due === 0 ? 'Due today' : `${bill.days_until_due} days`)
+            : `${Math.abs(bill.days_until_due)} days overdue`;
+
+          message += `${statusIcon} ${bill.bill_name} - $${bill.amount}\n`;
+          message += `   Due ${bill.due_day} (${daysText}) ${paymentType}\n`;
+          if (bill.is_paid && bill.paid_date) {
+            message += `   Paid on ${new Date(bill.paid_date).getDate()}\n`;
+          }
+          message += '\n';
+        });
 
         return {
           content: [{
             type: "text",
-            text: `📋 Your Bills & Subscriptions:\n\n${billsList}`
+            text: message
           }]
         };
       } catch (error) {
         return {
           content: [{
             type: "text",
-            text: `❌ Failed to list bills: ${error instanceof Error ? error.message : String(error)}`
+            text: `❌ Failed to get current month bills: ${error instanceof Error ? error.message : String(error)}`
           }]
         };
       }
     }
   );
 
-  // Check Due Bills Tool
+  // Check Due Soon Bills
   server.tool(
     "check_due_bills",
-    "Check for bills due soon and send reminders",
-    {
-      daysAhead: z.number().default(7).describe("How many days ahead to check for due bills"),
-      sendNotifications: z.boolean().default(true).describe("Send Poke notifications for due bills")
-    },
-    async ({ daysAhead, sendNotifications }) => {
+    "Check bills that are due soon and need manual payment",
+    {},
+    async () => {
       try {
-        const dueBills = await getBillsDueSoon(daysAhead);
-        const manualBills = dueBills.filter(bill => !bill.autopay && bill.reminder_enabled);
+        const dueSoon = await getBillsDueSoon();
+        const overdue = await getOverdueBills();
 
-        if (manualBills.length === 0) {
+        if (dueSoon.length === 0 && overdue.length === 0) {
           return {
             content: [{
               type: "text",
-              text: `✅ No manual payment bills due in the next ${daysAhead} days.`
+              text: "✨ No manual bills due soon! All bills are either paid, on autopay, or not due yet."
             }]
           };
         }
 
-        const billsList = manualBills.map(bill => {
-          const daysUntil = Math.ceil((new Date(bill.next_due_date).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
-          const urgency = daysUntil <= 0 ? "OVERDUE" : daysUntil <= 1 ? "DUE TODAY/TOMORROW" : `due in ${daysUntil} days`;
-          return `💳 ${bill.name}: $${bill.amount} - ${urgency}`;
-        }).join('\n');
+        let message = "";
 
-        const message = `🔔 Bills Requiring Manual Payment:\n\n${billsList}`;
-
-        // Log alerts for each bill
-        for (const bill of manualBills) {
-          const daysUntil = Math.ceil((new Date(bill.next_due_date).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
-          const alertType = daysUntil <= 0 ? 'overdue' : daysUntil <= 1 ? 'due_today' : 'reminder';
-          await logBillAlert(bill.id, alertType, `${bill.name} payment reminder: $${bill.amount} due ${new Date(bill.next_due_date).toLocaleDateString()}`);
+        if (overdue.length > 0) {
+          message += "🚨 OVERDUE BILLS (Manual Payment Required):\n\n";
+          overdue.forEach(bill => {
+            const daysOverdue = Math.abs(bill.days_until_due);
+            message += `⚠️ ${bill.bill_name} - $${bill.amount}\n`;
+            message += `   Due ${bill.due_day} (${daysOverdue} days overdue) 💳\n\n`;
+          });
         }
 
-        // Send Poke notification if enabled
-        if (sendNotifications) {
-          await sendPokeNotification(message);
+        if (dueSoon.length > 0) {
+          message += "📅 DUE SOON (Manual Payment Required):\n\n";
+          dueSoon.forEach(bill => {
+            const daysText = bill.days_until_due === 0 ? 'Due today' : `${bill.days_until_due} days`;
+            message += `⏳ ${bill.bill_name} - $${bill.amount}\n`;
+            message += `   Due ${bill.due_day} (${daysText}) 💳\n\n`;
+          });
         }
 
         return {
@@ -212,47 +205,37 @@ const mcpHandler = createMcpHandler((server) => {
     }
   );
 
-  // Mark Bill as Paid Tool
+  // Mark Bill Paid
   server.tool(
     "mark_bill_paid",
-    "Mark a manual bill as paid and update its next due date",
+    "Mark a bill as paid for the current month",
     {
-      billName: z.string().describe("Name of the bill that was paid"),
-      sendConfirmation: z.boolean().default(true).describe("Send Poke confirmation")
+      billName: z.string().describe("Name of the bill to mark as paid"),
+      sendConfirmation: z.boolean().default(true).describe("Send Poke notification")
     },
     async ({ billName, sendConfirmation }) => {
       try {
-        // Find the bill by name
-        const bills = await getAllBills();
-        const bill = bills.find(b => b.name.toLowerCase().includes(billName.toLowerCase()));
+        const bills = await getCurrentMonthBills();
+        const bill = bills.find(b =>
+          b.bill_name.toLowerCase().includes(billName.toLowerCase()) && !b.is_paid
+        );
 
         if (!bill) {
           return {
             content: [{
               type: "text",
-              text: `❌ Bill not found: ${billName}. Use list_bills to see available bills.`
+              text: `❌ No unpaid bill found matching: ${billName}`
             }]
           };
         }
 
-        if (bill.autopay) {
-          return {
-            content: [{
-              type: "text",
-              text: `ℹ️ ${bill.name} is on autopay - no need to mark as paid manually.`
-            }]
-          };
-        }
+        await markCurrentMonthBillPaid(bill.bill_id, bill.amount);
 
-        // Mark as paid (updates next due date)
-        const updatedBill = await markBillAsPaid(bill.id);
+        const currentMonth = new Date().toLocaleDateString('en-US', { month: 'long' });
+        const message = `✅ Marked ${bill.bill_name} as paid for ${currentMonth}! ($${bill.amount})`;
 
-        const message = `✅ ${bill.name} marked as paid! Next due date: ${new Date(updatedBill.next_due_date).toLocaleDateString()}`;
+        await logBillAlert(bill.bill_id, 'payment_recorded', message);
 
-        // Log the payment
-        await logBillAlert(bill.id, 'payment_recorded', message);
-
-        // Send confirmation
         if (sendConfirmation) {
           await sendPokeNotification(message);
         }
@@ -274,65 +257,30 @@ const mcpHandler = createMcpHandler((server) => {
     }
   );
 
-  // Toggle Autopay Tool
-  server.tool(
-    "toggle_autopay",
-    "Enable or disable autopay for a bill",
-    {
-      billName: z.string().describe("Name of the bill to modify"),
-      enableAutopay: z.boolean().describe("True to enable autopay, false to disable")
-    },
-    async ({ billName, enableAutopay }) => {
-      try {
-        const bills = await getAllBills();
-        const bill = bills.find(b => b.name.toLowerCase().includes(billName.toLowerCase()));
-
-        if (!bill) {
-          return {
-            content: [{
-              type: "text",
-              text: `❌ Bill not found: ${billName}`
-            }]
-          };
-        }
-
-        await toggleAutopay(bill.id, enableAutopay);
-
-        const message = `${enableAutopay ? '🤖 Autopay enabled' : '💳 Autopay disabled'} for ${bill.name}`;
-
-        return {
-          content: [{
-            type: "text",
-            text: message
-          }]
-        };
-      } catch (error) {
-        return {
-          content: [{
-            type: "text",
-            text: `❌ Failed to toggle autopay: ${error instanceof Error ? error.message : String(error)}`
-          }]
-        };
-      }
-    }
-  );
-
-  // Bills Summary Tool
+  // Bills Summary
   server.tool(
     "bills_summary",
-    "Get a summary of all bills and spending",
+    "Get monthly bills summary with payment status",
     {},
     async () => {
       try {
-        const summary = await getBillsSummary();
+        const summary = await getMonthlyBillsSummary();
+        const currentMonth = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
-        const message = `📊 Bills Summary:
+        const message = `📊 ${currentMonth} Bills Summary:
+
 📋 Total Bills: ${summary.totalBills}
-🤖 Autopay Bills: ${summary.autopayBills}
-💳 Manual Bills: ${summary.manualPaymentBills}
-💰 Est. Monthly Total: $${summary.estimatedMonthlyTotal.toFixed(2)}
+✅ Paid: ${summary.paidBills}
+⏳ Unpaid: ${summary.unpaidBills}
+⚠️ Overdue: ${summary.overdueBills}
+🤖 Auto-Pay: ${summary.autopayBills}
+💳 Manual: ${summary.manualBills}
 
-Use check_due_bills to see what's coming up!`;
+💰 Total Amount: $${summary.totalAmount.toFixed(2)}
+✅ Paid Amount: $${summary.paidAmount.toFixed(2)}
+⏳ Remaining: $${summary.unpaidAmount.toFixed(2)}
+
+Use 'check_due_bills' to see what needs attention!`;
 
         return {
           content: [{
@@ -351,10 +299,124 @@ Use check_due_bills to see what's coming up!`;
     }
   );
 
-  // Delete Bill Tool
+  // Next Month Preview
+  server.tool(
+    "next_month_bills",
+    "Preview bills for next month",
+    {},
+    async () => {
+      try {
+        const bills = await getNextMonthBills();
+        const nextMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1)
+          .toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+        if (bills.length === 0) {
+          return {
+            content: [{
+              type: "text",
+              text: `📋 No bills scheduled for ${nextMonth}`
+            }]
+          };
+        }
+
+        let message = `🗓️ ${nextMonth} Bills Preview:\n\n`;
+
+        bills.forEach(bill => {
+          const paymentType = bill.autopay ? '🤖 Auto' : '💳 Manual';
+          message += `• ${bill.bill_name} - $${bill.amount}\n`;
+          message += `  Due ${bill.due_day} (${paymentType})\n\n`;
+        });
+
+        const totalAmount = bills.reduce((sum, bill) => sum + bill.amount, 0);
+        message += `💰 Total: $${totalAmount.toFixed(2)}`;
+
+        return {
+          content: [{
+            type: "text",
+            text: message
+          }]
+        };
+      } catch (error) {
+        return {
+          content: [{
+            type: "text",
+            text: `❌ Failed to get next month bills: ${error instanceof Error ? error.message : String(error)}`
+          }]
+        };
+      }
+    }
+  );
+
+  // Edit Bill Template
+  server.tool(
+    "edit_bill",
+    "Edit a bill template (affects future months, not current payments)",
+    {
+      billName: z.string().describe("Name of the bill to edit"),
+      newAmount: z.number().positive().optional().describe("New amount"),
+      newDueDay: z.number().min(1).max(31).optional().describe("New due day (1-31)"),
+      newAutopay: z.boolean().optional().describe("New autopay setting")
+    },
+    async ({ billName, newAmount, newDueDay, newAutopay }) => {
+      try {
+        const bills = await getAllBills();
+        const bill = bills.find(b => b.name.toLowerCase().includes(billName.toLowerCase()));
+
+        if (!bill) {
+          return {
+            content: [{
+              type: "text",
+              text: `❌ Bill template not found: ${billName}`
+            }]
+          };
+        }
+
+        const updates: any = {};
+        if (newAmount !== undefined) updates.amount = newAmount;
+        if (newDueDay !== undefined) updates.due_day = newDueDay;
+        if (newAutopay !== undefined) updates.autopay = newAutopay;
+
+        if (Object.keys(updates).length === 0) {
+          return {
+            content: [{
+              type: "text",
+              text: `❌ No changes specified for ${bill.name}`
+            }]
+          };
+        }
+
+        await updateBill(bill.id, updates);
+
+        let changes = [];
+        if (newAmount !== undefined) changes.push(`amount: $${newAmount}`);
+        if (newDueDay !== undefined) changes.push(`due day: ${newDueDay}`);
+        if (newAutopay !== undefined) changes.push(`autopay: ${newAutopay ? 'enabled' : 'disabled'}`);
+
+        const message = `✅ Updated ${bill.name}: ${changes.join(', ')}`;
+
+        await logBillAlert(bill.id, 'bill_updated', message);
+
+        return {
+          content: [{
+            type: "text",
+            text: message
+          }]
+        };
+      } catch (error) {
+        return {
+          content: [{
+            type: "text",
+            text: `❌ Failed to edit bill: ${error instanceof Error ? error.message : String(error)}`
+          }]
+        };
+      }
+    }
+  );
+
+  // Delete Bill
   server.tool(
     "delete_bill",
-    "Delete/cancel a bill or subscription",
+    "Delete a bill template (stops tracking for future months)",
     {
       billName: z.string().describe("Name of the bill to delete")
     },
@@ -367,14 +429,14 @@ Use check_due_bills to see what's coming up!`;
           return {
             content: [{
               type: "text",
-              text: `❌ Bill not found: ${billName}`
+              text: `❌ Bill template not found: ${billName}`
             }]
           };
         }
 
         await deleteBill(bill.id);
 
-        const message = `🗑️ Deleted bill: ${bill.name}`;
+        const message = `🗑️ Deleted bill template: ${bill.name}`;
         await logBillAlert(bill.id, 'bill_deleted', message);
 
         return {
@@ -388,6 +450,33 @@ Use check_due_bills to see what's coming up!`;
           content: [{
             type: "text",
             text: `❌ Failed to delete bill: ${error instanceof Error ? error.message : String(error)}`
+          }]
+        };
+      }
+    }
+  );
+
+  // Check and Send Bill Alerts
+  server.tool(
+    "check_bill_alerts",
+    "Check for due bills and send proactive Poke notifications",
+    {},
+    async () => {
+      try {
+        const result = await checkAndSendBillAlerts();
+        const summary = formatAlertSummary(result);
+
+        return {
+          content: [{
+            type: "text",
+            text: summary
+          }]
+        };
+      } catch (error) {
+        return {
+          content: [{
+            type: "text",
+            text: `❌ Failed to check bill alerts: ${error instanceof Error ? error.message : String(error)}`
           }]
         };
       }
