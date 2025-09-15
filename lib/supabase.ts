@@ -21,7 +21,7 @@ export interface DBTransaction {
 export interface DBBudget {
   id: string
   category: string
-  limit: number
+  budget_limit: number
   spent: number
   period: 'monthly' | 'weekly' | 'yearly'
   created_at?: string
@@ -34,7 +34,8 @@ export interface DBBill {
   amount: number
   due_date: string
   recurring: boolean
-  paid: boolean
+  autopay: boolean
+  budget_category?: string
   created_at?: string
   updated_at?: string
 }

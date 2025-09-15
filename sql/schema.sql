@@ -35,7 +35,8 @@ CREATE TABLE bills (
   amount DECIMAL(10,2) NOT NULL CHECK (amount > 0),
   due_date DATE NOT NULL,
   recurring BOOLEAN DEFAULT FALSE,
-  paid BOOLEAN DEFAULT FALSE,
+  autopay BOOLEAN DEFAULT FALSE,
+  budget_category VARCHAR(100),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -46,7 +47,8 @@ CREATE INDEX idx_transactions_category ON transactions(category);
 CREATE INDEX idx_transactions_type ON transactions(type);
 CREATE INDEX idx_budgets_category ON budgets(category);
 CREATE INDEX idx_bills_due_date ON bills(due_date);
-CREATE INDEX idx_bills_paid ON bills(paid);
+CREATE INDEX idx_bills_autopay ON bills(autopay);
+CREATE INDEX idx_bills_budget_category ON bills(budget_category);
 
 -- Create updated_at trigger function
 CREATE OR REPLACE FUNCTION update_updated_at_column()
